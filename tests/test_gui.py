@@ -65,8 +65,7 @@ class GuiTests(unittest.TestCase):
 
     def test_background_job_finishes_and_reenables_controls(self):
         import time
-        self.window.key.setText('fake-key')
-        with patch('gui.app.sync', return_value=0):
+        with patch('gui.app.API_KEY', 'fake-key'), patch('gui.app.sync', return_value=0):
             self.window.collect('sync')
             self.assertFalse(self.window.sync_button.isEnabled())
             deadline = time.monotonic() + 5
@@ -75,3 +74,11 @@ class GuiTests(unittest.TestCase):
                 time.sleep(.01)
             self.assertIsNone(self.window.thread)
             self.assertTrue(self.window.sync_button.isEnabled())
+
+    def test_missing_key_directs_user_to_env_without_starting_worker(self):
+        for key in ('', 'your_api_key_here'):
+            with self.subTest(key=key), patch('gui.app.API_KEY', key):
+                self.window.collect('sync')
+                self.assertIsNone(self.window.thread)
+                self.assertIn('.env', self.window.statusBar().currentMessage())
+        self.assertFalse(hasattr(self.window, 'key'))
