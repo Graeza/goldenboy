@@ -13,6 +13,19 @@ Copy-Item .env.example .env
 
 Edit `.env`, inserting your own `TWELVE_DATA_API_KEY` (do not commit `.env`). Requires Python 3.9+.
 
+## Desktop app
+
+Run `python -m gui.app` after installing requirements. The Qt desktop app offers:
+
+- Backfill and sync for one interval or all intervals, with UTC date controls.
+- Background collection while the interface remains responsive. One job runs at a time; wait for it to finish before closing.
+- A queue-based log pump displaying live application logs, plus rotating files in `logs/goldenboy.log` (2 MB each, three backups).
+- Candlestick charts from SQLite with interval selection, latest-bar limits, pan, zoom, and image export through the chart toolbar.
+
+The API key comes from `.env` or the masked input and is never saved by the GUI. Backfill before the first sync. Charts show stored data; use Sync to fetch updates, then charts refresh automatically. No automatic collection schedule is enabled. Daily candles retain the session-date limitations below.
+
+On Linux, Qt needs desktop display libraries; for headless tests set `QT_QPA_PLATFORM=offscreen`. CLI commands remain available.
+
 ## Start
 
 ```powershell

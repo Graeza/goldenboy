@@ -1,8 +1,12 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from config.settings import WINDOW_DAYS
 from .database import latest_time, upsert_bars
 from .provider import normalize, SECONDS, ProviderError
+
+
+logger = logging.getLogger("goldenboy.pipeline")
 
 
 def utc_dt(text: str) -> datetime:
@@ -30,7 +34,7 @@ def backfill(provider, con, symbol: str, timeframe: str, start: datetime,
             raise ProviderError("Window returned >= 5000 rows; reduce WINDOW_DAYS to prevent truncation")
         bars = normalize(values, symbol, timeframe, now=now)
         total += upsert_bars(con, bars)
-        print(f"{timeframe}: {cursor.date()} -> {window_end.date()}, fetched={len(values)}, stored={len(bars)}")
+        logger.info(f"{timeframe}: {cursor.date()} -> {window_end.date()}, fetched={len(values)}, stored={len(bars)}")
         cursor = window_end
     return total
 
@@ -48,12 +52,12 @@ def sync(provider, con, symbol: str, timeframe: str, now: Optional[datetime] = N
     overlap = timedelta(seconds=SECONDS[timeframe] * 2)
     start = last_dt - overlap
     if (now - start).total_seconds() / SECONDS[timeframe] >= 4900:
-        print(f"{timeframe}: large gap detected, switching to windowed backfill")
+        logger.info(f"{timeframe}: large gap detected, switching to windowed backfill")
         return backfill(provider, con, symbol, timeframe, start, now, now=now)
     rows = provider.fetch(symbol, timeframe, start=start, end=now)
     if len(rows) >= 5000:
         raise ProviderError("Sync response hit 5000-row limit, use backfill")
     bars = normalize(rows, symbol, timeframe, now=now)
     count = upsert_bars(con, bars)
-    print(f"{timeframe}: refreshed {count} closed bars")
+    logger.info(f"{timeframe}: refreshed {count} closed bars")
     return count

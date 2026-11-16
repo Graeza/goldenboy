@@ -1,5 +1,7 @@
 """CLI: python main.py init|backfill|sync|status"""
 import argparse
+import logging
+from core.logging_setup import configure_logging
 from datetime import datetime, timezone, timedelta
 
 from config.settings import API_KEY, DB_PATH, SYMBOL, TIMEFRAMES
@@ -16,6 +18,9 @@ def parse_datetime(text):
 
 
 def main():
+    configure_logging()
+    console = logging.StreamHandler()
+    logging.getLogger("goldenboy").addHandler(console)
     p = argparse.ArgumentParser(description="Gold XAU/USD SQLite market data collector")
     p.add_argument("command", choices=["init", "backfill", "sync", "status"])
     p.add_argument("--start", help="UTC start date YYYY-MM-DD (backfill only)")

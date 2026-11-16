@@ -46,7 +46,7 @@ class TwelveDataProvider:
             response.raise_for_status()
             data = response.json()
         except (requests.RequestException, ValueError) as exc:
-            raise ProviderError(f"Twelve Data HTTP/JSON error: {exc}") from exc
+            raise ProviderError(f"Twelve Data HTTP/JSON error ({type(exc).__name__})") from None
         if data.get("status") == "error" or "values" not in data:
             raise ProviderError(f"Twelve Data API error: {data.get('message', str(data)[:250])}")
         return data["values"]
