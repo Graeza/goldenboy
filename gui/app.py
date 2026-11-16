@@ -6,8 +6,8 @@ from logging.handlers import QueueHandler
 
 from PySide6.QtCore import QDate, QObject, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDateEdit, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QSpinBox,
+    QApplication, QComboBox, QDateEdit, QHBoxLayout, QLabel,
+    QMainWindow, QPlainTextEdit, QPushButton, QSpinBox,
     QSplitter, QVBoxLayout, QWidget,
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -96,11 +96,6 @@ class Window(QMainWindow):
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         layout.addWidget(QLabel(f'{SYMBOL} · Stored market candles · UTC'))
-        form = QFormLayout()
-        self.key = QLineEdit(API_KEY)
-        self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key.setPlaceholderText('Twelve Data API key (kept in memory)')
-        form.addRow('API key', self.key)
         controls = QHBoxLayout()
         self.frames = QComboBox()
         self.frames.addItems(['all', *TIMEFRAMES])
@@ -121,7 +116,6 @@ class Window(QMainWindow):
         self.sync_button.clicked.connect(lambda: self.collect('sync'))
         controls.addWidget(self.backfill_button)
         controls.addWidget(self.sync_button)
-        layout.addLayout(form)
         layout.addLayout(controls)
         chart_controls = QHBoxLayout()
         self.chart_frame = QComboBox()
@@ -170,12 +164,12 @@ class Window(QMainWindow):
         if command == 'backfill' and (start >= end or end > datetime.now(timezone.utc)):
             self.statusBar().showMessage('Choose start < end, with end no later than now (UTC)')
             return
-        if not self.key.text().strip():
-            self.statusBar().showMessage('Enter your Twelve Data API key')
+        if not API_KEY.strip() or API_KEY.strip() == "your_api_key_here":
+            self.statusBar().showMessage('Set TWELVE_DATA_API_KEY in .env and restart the app')
             return
         frames = TIMEFRAMES if self.frames.currentText() == 'all' else (self.frames.currentText(),)
         self.thread = QThread(self)
-        self.worker = Collector(command, self.key.text().strip(), frames, start, end)
+        self.worker = Collector(command, API_KEY.strip(), frames, start, end)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.completed)
