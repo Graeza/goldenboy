@@ -1,0 +1,11 @@
+.env
+prototype.ipynb
+
+.goldenboy_venv/
+goldenboy_venv/
+
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
