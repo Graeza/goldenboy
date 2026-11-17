@@ -10,8 +10,8 @@ GOLD_SYMBOL = os.getenv('MT5_SYMBOL', 'XAUUSD').strip()
 if not re.fullmatch(r'(?:XAUUSD|GOLD)(?:[._-]?[A-Za-z0-9]+)?', GOLD_SYMBOL, re.IGNORECASE):
     raise ValueError('MT5_SYMBOL must be a gold symbol such as XAUUSD, XAUUSDm or GOLD')
 SYMBOL_LIST = [GOLD_SYMBOL]
-TIMEFRAME_LIST = [5, 16385, 16408]  # MT5 M5, H1, D1 enums, unchanged at terminal boundary.
-TIMEFRAME_NAMES = {5: '5 minutes', 16385: 'Hourly', 16408: 'Daily'}
+TIMEFRAME_LIST = [5, 16385, 16387, 16408]  # MT5 M5, H1, H3, D1 enums, unchanged at terminal boundary.
+TIMEFRAME_NAMES = {5: '5 minutes', 16385: 'Hourly', 16387: '3 hours', 16408: 'Daily'}
 PRIMARY_TIMEFRAME = 5
 DB_PATH = str(Path(os.getenv('GOLD_DB_PATH', str(PROJECT_ROOT / 'data' / 'gold_tradlab.db'))))
 LOOP_SLEEP_SECONDS = 300

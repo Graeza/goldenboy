@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from logging.handlers import QueueHandler
 
 from PySide6.QtCore import QDate, QObject, QThread, QTimer, Signal, Qt
-from PySide6.QtWidgets import (QApplication, QComboBox, QDateEdit, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateEdit, QHBoxLayout, QLabel,
     QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTabWidget,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -77,7 +77,7 @@ class Window(QMainWindow):
         layout = QVBoxLayout(root)
         self.setCentralWidget(root)
         header = QHBoxLayout()
-        header.addWidget(QLabel(f'<b>GOLDENBOY</b> · {GOLD_SYMBOL} · M5 / H1 / D1'))
+        header.addWidget(QLabel(f'<b>GOLDENBOY</b> · {GOLD_SYMBOL} · M5 / H1 / H3 / D1'))
         header.addStretch()
         self.profile = QComboBox()
         self.profile.addItems(['DEMO', 'LIVE'])
@@ -95,11 +95,14 @@ class Window(QMainWindow):
         self.dashboard = self.page('Dashboard')
         self.quote = QLabel('Initialize MetaTrader to load the gold quote and account.')
         self.dashboard.addWidget(self.quote)
-        self.strategy_status = QLabel('Strategy: awaiting your gold strategy. Trading is unavailable.')
+        self.strategy_status = QLabel('SAST breakout · 04–05 / 12–13 / 16–17 · HOLD')
         self.dashboard.addWidget(self.strategy_status)
-        start_bot = QPushButton('Start trading · strategy required')
-        start_bot.setEnabled(False)
-        self.dashboard.addWidget(start_bot)
+        self.monitor = QPushButton('Start strategy monitor')
+        self.monitor.setCheckable(True)
+        self.monitor.toggled.connect(self.set_monitor)
+        self.dashboard.addWidget(self.monitor)
+        self.allow_orders = QCheckBox('Execute orders (tradlab risk: 0.75%, SL 0.3%, TP 1.8R; max one gold position)')
+        self.dashboard.addWidget(self.allow_orders)
         self.coverage = QTableWidget(0, 4)
         self.coverage.setHorizontalHeaderLabels(['Interval', 'Stored candles', 'First UTC open', 'Latest UTC open'])
         self.coverage.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -117,7 +120,7 @@ class Window(QMainWindow):
         date_controls.addWidget(self.start)
         date_controls.addWidget(QLabel('Until UTC (exclusive)'))
         date_controls.addWidget(self.end)
-        self.backfill = QPushButton('Backfill M5 / H1 / D1')
+        self.backfill = QPushButton('Backfill M5 / H1 / H3 / D1')
         self.backfill.clicked.connect(self.backfill_range)
         date_controls.addWidget(self.backfill)
         data.addLayout(date_controls)
@@ -144,10 +147,12 @@ class Window(QMainWindow):
         self.positions.horizontalHeader().setStretchLastSection(True)
         portfolio.addWidget(self.positions)
         backtest = self.page('Backtesting')
-        backtest.addWidget(QLabel('Strategy: not installed. Candle inspection is available; backtest execution awaits your strategy.'))
-        self.run_backtest = QPushButton('Run backtest · strategy required')
-        self.run_backtest.setEnabled(False)
+        backtest.addWidget(QLabel('M5 breakout signal replay. OHLC cannot determine intrabar order or actual tick fills; no P&L is simulated.'))
+        self.run_backtest = QPushButton('Replay session signals')
+        self.run_backtest.clicked.connect(lambda: self.launch('run_backtest'))
         backtest.addWidget(self.run_backtest)
+        self.replay_summary = QLabel('No replay run yet')
+        backtest.addWidget(self.replay_summary)
         chart_controls = QHBoxLayout()
         self.chart_frame = QComboBox()
         for tf, name in TIMEFRAME_NAMES.items():
@@ -183,6 +188,9 @@ class Window(QMainWindow):
         logs_tab.addWidget(clear)
         logs_tab.addStretch()
         self.pump = LogPump(self.logs, self)
+        self.strategy_timer = QTimer(self)
+        self.strategy_timer.setInterval(250)
+        self.strategy_timer.timeout.connect(self.poll_strategy)
         self.timer = QTimer(self)
         self.timer.setInterval(300000)
         self.timer.timeout.connect(self.auto_collect)
@@ -191,7 +199,7 @@ class Window(QMainWindow):
         self.limit.valueChanged.connect(self.refresh)
         self.set_controls()
         self.refresh()
-        self.statusBar().showMessage('Ready · no strategy installed')
+        self.statusBar().showMessage('Ready · SAST session breakout; order execution off')
         logger.info('Gold workspace ready. Database: %s', self.session.db.db_path)
 
     def page(self, title):
@@ -203,10 +211,28 @@ class Window(QMainWindow):
     def set_controls(self):
         idle = self.thread is None
         connected = self.session.client is not None
+        monitoring = self.monitor.isChecked()
         for control in (self.initialize, self.profile):
-            control.setEnabled(idle)
+            control.setEnabled(idle and not monitoring)
         for control in (self.backfill, self.sync, self.refresh_account, self.auto):
-            control.setEnabled(idle and connected)
+            control.setEnabled(idle and connected and not monitoring)
+        self.monitor.setEnabled(connected and (idle or monitoring))
+        self.run_backtest.setEnabled(idle and not monitoring)
+
+    def set_monitor(self, enabled):
+        if enabled:
+            self.auto.setChecked(False)
+            self.strategy_timer.start()
+            self.poll_strategy()
+        else:
+            self.strategy_timer.stop()
+            self.allow_orders.setChecked(False)
+        self.monitor.setText('Stop strategy monitor' if enabled else 'Start strategy monitor')
+        self.set_controls()
+
+    def poll_strategy(self):
+        if self.thread is None and self.session.client is not None:
+            self.launch('evaluate_market', execute=self.allow_orders.isChecked())
 
     def launch(self, operation, **options):
         if self.thread is not None:
@@ -225,15 +251,28 @@ class Window(QMainWindow):
 
     def completed(self, success, payload):
         if success:
-            self.last_snapshot = payload
-            self.show_snapshot(payload)
+            if 'decision' in payload:
+                decision = payload['decision']
+                self.strategy_status.setText(f"SAST breakout · {decision['signal']} · {decision['meta']['reason']}")
+                if 'bid' in decision['meta']:
+                    self.quote.setText(f"{GOLD_SYMBOL} · Bid {decision['meta']['bid']} · Previous M5: {decision['meta']['low']}–{decision['meta']['high']}")
+            elif 'replay' in payload:
+                frame = payload['replay']
+                counts = frame['signal'].value_counts().to_dict()
+                ambiguous = int((frame['reason'] == 'ambiguous_intrabar_order').sum())
+                self.replay_summary.setText(f'{len(frame)} bars · {counts} · {ambiguous} ambiguous bars · no fill/P&L simulation')
+            else:
+                self.last_snapshot = payload
+                self.show_snapshot(payload)
             self.statusBar().showMessage('Operation complete')
         else:
             self.statusBar().showMessage(str(payload))
             if self.session.client is None:
                 self.connection.setText('Disconnected · initialization failed')
                 self.auto.setChecked(False)
-        self.refresh()
+            self.monitor.setChecked(False)
+        if not (success and "decision" in payload):
+            self.refresh()
 
     def job_done(self):
         self.thread.deleteLater()
@@ -277,7 +316,7 @@ class Window(QMainWindow):
 
     def refresh(self, *_):
         from datetime import datetime, timezone
-        self.coverage.setRowCount(3)
+        self.coverage.setRowCount(len(TIMEFRAME_NAMES))
         for i, (tf, name) in enumerate(TIMEFRAME_NAMES.items()):
             row = self.session.db.conn.execute('SELECT COUNT(*),MIN(time),MAX(time) FROM bars WHERE symbol=? AND timeframe=?', (GOLD_SYMBOL,tf)).fetchone()
             values = [name, row[0], *[datetime.fromtimestamp(v,timezone.utc).isoformat() if v else '—' for v in row[1:]]]
@@ -298,6 +337,7 @@ class Window(QMainWindow):
             event.ignore()
             return
         self.timer.stop()
+        self.strategy_timer.stop()
         self.session.close()
         self.pump.close()
         event.accept()
