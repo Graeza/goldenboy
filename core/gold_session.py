@@ -22,6 +22,9 @@ class GoldSession:
         self.db = MarketDatabase(db_path)
         self.client_factory = client_factory
         self.client = None
+        self._reference = None
+        self._attempted_bar = None
+        self._last_decision = None
 
     def initialize(self, profile='DEMO'):
         from core.mt5_worker import MT5Client
@@ -42,6 +45,8 @@ class GoldSession:
             if base and base.upper() != 'XAU':
                 raise RuntimeError('Configured broker symbol does not have gold (XAU) as base currency')
             self.client = client
+            self._reference = None
+            self._attempted_bar = None
             logger.info('MT5 connected: %s, %s', profile, GOLD_SYMBOL)
             return self.snapshot()
         except Exception:
@@ -56,20 +61,20 @@ class GoldSession:
         return self.client
 
     def collect(self, start=None, end=None):
-        from core.data_fetcher import DataFetcher
+        from core.gold_fetcher import GoldDataFetcher as DataFetcher
         from core.data_pipeline import DataPipeline
         client = self.require_connection()
         fetcher = DataFetcher(client)
         if start is None:
             DataPipeline(fetcher, self.db).update_symbol(GOLD_SYMBOL, TIMEFRAME_LIST, n_bars=3000)
-            logger.info('Refreshed gold M5, H1 and D1 candles')
+            logger.info('Refreshed gold M5, H1, H3 and D1 candles')
         else:
             now = datetime.now(timezone.utc)
             if start.tzinfo is None or end is None or end.tzinfo is None or not start < end <= now:
                 raise ValueError('Choose timezone-aware start < end <= now (end is exclusive)')
             for tf in TIMEFRAME_LIST:
                 cursor = start
-                days = {5: 10, 16385: 100, 16408: 365}[tf]
+                days = {5: 10, 16385: 100, 16387: 300, 16408: 365}[tf]
                 while cursor < end:
                     upper = min(cursor + timedelta(days=days), end)
                     bars = fetcher.fetch_range(GOLD_SYMBOL, tf, int(cursor.timestamp()), int(upper.timestamp()) - 1)
@@ -92,15 +97,52 @@ class GoldSession:
         positions = [p for p in list_positions(client, GOLD_SYMBOL) if p.symbol == GOLD_SYMBOL]
         return {'account': account, 'positions': positions, 'tick': tick}
 
-    def run_backtest(self, **kwargs):
-        strategies = require_strategy()
-        from backtest.engine import run_backtest_next_open
-        from backtest.data_source import load_bars_from_db
-        from core.ensemble import EnsembleEngine
-        data = load_bars_from_db(self.db, GOLD_SYMBOL, TIMEFRAME_LIST)
-        return run_backtest_next_open(symbol=GOLD_SYMBOL, bars_by_tf=data.bars_by_tf,
-                                      timeframes=TIMEFRAME_LIST, primary_tf=5,
-                                      ensemble=EnsembleEngine(strategies), **kwargs)
+    def evaluate_market(self, execute=False):
+        """Poll the latest bid; no candle-close wait. Orders are explicitly opt-in."""
+        from core.gold_fetcher import GoldDataFetcher
+        from strategies.session_breakout import SessionBreakout
+        client = self.require_connection()
+        now = datetime.now(timezone.utc)
+        bucket = int(now.timestamp()) // 300 * 300
+        if self._reference is None or int(self._reference['time']) != bucket - 300:
+            frame = GoldDataFetcher(client).fetch_window(GOLD_SYMBOL, 5, n_bars=3)
+            self._reference = None if frame.empty else frame.iloc[-1].to_dict()
+            if not frame.empty:
+                self.db.upsert_bars(frame, GOLD_SYMBOL, 5)
+        tick = client.symbol_info_tick(GOLD_SYMBOL)
+        tick_time = getattr(tick, 'time_msc', 0) / 1000 or getattr(tick, 'time', 0)
+        if not tick_time or not 0 <= now.timestamp() - tick_time <= 5:
+            decision = SessionBreakout().result('HOLD', 'stale_or_missing_tick')
+        else:
+            decision = SessionBreakout().evaluate_tick(self._reference, getattr(tick, 'bid', None), now)
+        execution = None
+        if execute and decision.signal.value != 'HOLD' and self._attempted_bar != bucket:
+            self._attempted_bar = bucket  # At most one order attempt per M5 candle, including failures.
+            positions = client.positions_get(symbol=GOLD_SYMBOL) or []
+            if any(getattr(p, 'symbol', '') == GOLD_SYMBOL for p in positions):
+                execution = {'ok': False, 'reason': 'gold_position_already_open'}
+            else:
+                from risk_manager import RiskManager
+                from trade_executor import TradeExecutor
+                # Preserve tradlab defaults: 0.75% risk, fallback SL 0.3%, TP 1.8R.
+                params = RiskManager(client).assess(decision.to_dict(), GOLD_SYMBOL)
+                if params is None:
+                    execution = {'ok': False, 'reason': 'risk_rejected'}
+                else:
+                    params['strategy_name'] = decision.name
+                    execution = TradeExecutor(client, force_symbol_fixed_lot=False).execute(params)
+            logger.info('Order attempt: %s; result: %s', decision.signal.value, execution.get('reason', execution.get('ok')))
+        key = (decision.signal.value, decision.meta.get('reason'), bucket)
+        if self._last_decision != key:
+            logger.info('Session breakout: %s · %s', decision.signal.value, decision.meta.get('reason'))
+            self._last_decision = key
+        return {'decision': decision.to_dict(), 'execution': execution}
+
+    def run_backtest(self):
+        from backtest.session_breakout import replay_signals
+        bars = self.db.load_bars(GOLD_SYMBOL, 5, limit=200000)
+        signals = replay_signals(bars)
+        return {'replay': signals}
 
     def close(self):
         if self.client is not None:

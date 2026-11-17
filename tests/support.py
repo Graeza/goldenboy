@@ -5,14 +5,14 @@ import time
 import numpy as np
 
 terminal = types.ModuleType('MetaTrader5')
-for key, value in {'TIMEFRAME_M5':5,'TIMEFRAME_H1':16385,'TIMEFRAME_D1':16408,
+for key, value in {'TIMEFRAME_M5':5,'TIMEFRAME_H1':16385,'TIMEFRAME_H3':16387,'TIMEFRAME_D1':16408,
     'POSITION_TYPE_BUY':0,'POSITION_TYPE_SELL':1,'ORDER_TYPE_BUY':0,'ORDER_TYPE_SELL':1}.items():
     setattr(terminal,key,value)
 sys.modules['MetaTrader5'] = terminal
 
 
 def rates(tf=5):
-    duration={5:300,16385:3600,16408:86400}[tf]
+    duration={5:300,16385:3600,16387:10800,16408:86400}[tf]
     stamp=int(time.time()) // duration * duration
     return np.array([(stamp-duration,2000,2010,1990,2005,42,12,0),
                      (stamp,2005,2012,2000,2007,12,11,0)],

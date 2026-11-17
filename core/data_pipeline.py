@@ -11,7 +11,7 @@ class DataPipeline:
         out = {}
         for tf in timeframes:
             if tf not in TIMEFRAME_LIST:
-                raise ValueError('Only M5, H1 and D1 are supported')
+                raise ValueError('Only M5, H1, H3 and D1 are supported')
             # Use tradlab fetch_window, with overlap to refresh broker corrections.
             frame = self.fetcher.fetch_window(symbol, tf, n_bars)
             if not frame.empty:

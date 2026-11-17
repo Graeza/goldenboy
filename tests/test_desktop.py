@@ -31,7 +31,7 @@ class DesktopTests(unittest.TestCase):
         self.assertIsNone(self.window.thread)
     def test_tabs_and_strategy_controls(self):
         self.assertEqual([self.window.tabs.tabText(i) for i in range(self.window.tabs.count())],['Dashboard','Data','Portfolio','Backtesting','Logs'])
-        self.assertFalse(self.window.run_backtest.isEnabled())
+        self.assertTrue(self.window.run_backtest.isEnabled())
         self.assertEqual(len(self.window.chart.widget.ci.items),1)
         self.assertFalse(self.window.sync.isEnabled())
     def test_connect_collect_chart_and_shutdown(self):
@@ -53,3 +53,20 @@ class DesktopTests(unittest.TestCase):
         self.wait()
         self.assertTrue(self.window.initialize.isEnabled())
         self.assertFalse(self.window.sync.isEnabled())
+
+    def test_monitor_defaults_to_signals_only_and_stop_disarms_orders(self):
+        from unittest.mock import patch
+        self.window.initialize.click()
+        self.wait()
+        result={'decision':{'signal':'HOLD','meta':{'reason':'outside_third_hour'}},'execution':None}
+        with patch.object(self.window.session,'evaluate_market',return_value=result) as poll:
+            self.assertFalse(self.window.allow_orders.isChecked())
+            self.window.monitor.click()
+            self.wait()
+            self.window.strategy_timer.stop()
+            poll.assert_called_with(execute=False)
+            self.assertIn('HOLD',self.window.strategy_status.text())
+            self.window.allow_orders.setChecked(True)
+            self.window.monitor.click()
+            self.assertFalse(self.window.allow_orders.isChecked())
+            self.assertFalse(self.window.strategy_timer.isActive())

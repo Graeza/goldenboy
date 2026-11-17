@@ -31,9 +31,9 @@ class FoundationTests(unittest.TestCase):
         for name, digest in manifest['unchanged_files'].items():
             self.assertEqual(hashlib.sha256((root/name).read_bytes()).hexdigest(),digest,name)
 
-    def test_only_gold_and_three_intervals(self):
+    def test_only_gold_and_four_intervals(self):
         self.assertEqual(settings.SYMBOL_LIST,[settings.GOLD_SYMBOL])
-        self.assertEqual(settings.TIMEFRAME_LIST,[5,16385,16408])
+        self.assertEqual(settings.TIMEFRAME_LIST,[5,16385,16387,16408])
         with self.assertRaises(ValueError): settings.require_gold('EURUSD')
 
     def test_initialize_snapshot_filters_other_positions(self):
@@ -60,13 +60,10 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(len([c for c in calls if c[2]==5]),3)
         self.assertTrue(all(c[3].tzinfo==timezone.utc and c[4]<end for c in calls))
 
-    def test_no_strategy_can_run_or_trade(self):
-        self.assertEqual(configured_strategies(),[])
-        with self.assertRaisesRegex(RuntimeError,'No strategy'): self.session.run_backtest()
+    def test_session_strategy_is_registered_and_gold_guard_remains(self):
+        self.assertEqual([s.name for s in configured_strategies()], ['GOLD_SESSION_BREAKOUT'])
         from trade_executor import TradeExecutor
         executor=TradeExecutor(FakeClient())
-        with self.assertRaisesRegex(RuntimeError,'No strategy'):
-            executor.execute(dict(symbol=settings.GOLD_SYMBOL,action='BUY',lot_size=.01))
         with self.assertRaises(ValueError):
             executor.execute(dict(symbol='EURUSD',action='BUY',lot_size=.01))
 
@@ -117,3 +114,12 @@ class FoundationTests(unittest.TestCase):
         import importlib
         for name in ('core.orchestrator','core.bot_controller','backtest.engine','backtest.preparation','backtest.broker','backtest.risk','risk_manager','trade_executor'):
             importlib.import_module(name)
+
+    def test_h3_adapter_retains_closed_tail_and_excludes_forming_bar(self):
+        from core.gold_fetcher import GoldDataFetcher
+        import pandas as pd
+        now = 1000000
+        frame = pd.DataFrame({'time': [now - 21600, now - 10800, now - 500]})
+        with patch('core.gold_fetcher.time.time', return_value=now):
+            result = GoldDataFetcher(FakeClient())._drop_unclosed_tail(frame, 16387)
+        self.assertEqual(result['time'].tolist(), [now - 21600, now - 10800])

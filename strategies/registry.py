@@ -1,10 +1,10 @@
-"""No bundled strategies. Register the supplied gold strategy here later."""
+"""The supplied gold session strategy, evaluated on live ticks."""
+from strategies.session_breakout import SessionBreakout
+
+
 def configured_strategies():
-    return []
+    return [SessionBreakout()]
 
 
 def require_strategy():
-    strategies = configured_strategies()
-    if not strategies:
-        raise RuntimeError("No strategy installed. Provide the gold strategy before trading or running a backtest.")
-    return strategies
+    return configured_strategies()

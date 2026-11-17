@@ -5,3 +5,4 @@ pyqtgraph>=0.13.7,<0.15
 python-dotenv>=1,<2
 keyring>=24,<26
 MetaTrader5>=5.0.45; sys_platform == "win32"
+tzdata>=2024.1
