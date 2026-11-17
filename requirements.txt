@@ -1,5 +1,7 @@
-requests>=2.31,<3
-python-dotenv>=1.0,<2
-PySide6>=6.6,<7
 numpy>=1.26,<3
+pandas>=2.1,<3
+PySide6>=6.6,<7
 pyqtgraph>=0.13.7,<0.15
+python-dotenv>=1,<2
+keyring>=24,<26
+MetaTrader5>=5.0.45; sys_platform == "win32"

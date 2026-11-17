@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+
+@dataclass(frozen=True)
+class BacktestRiskParams:
+    qty: float
+    sl: Optional[float]
+    tp: Optional[float]
+    fixed_sl_tp_offset: Optional[float] = None
+
+
+class BacktestRiskManager:
+    """Backtest-side approximation of the live risk and entry policy.
+
+    Notes:
+      - qty is in simulated units, not broker lots.
+      - spread filters can be enforced when historical bar spread is available.
+      - base_deviation_points remains informational (deterministic next-open model).
+    """
+
+    def __init__(
+        self,
+        max_risk_pct: float = 1.0,
+        min_confidence: float = 0.60,
+        sl_atr_mult: float = 2.0,
+        tp_rr: float = 1.5,
+        fallback_sl_pct: float = 0.003,
+        max_leverage: float = 2.0,
+        max_spread_points: int = 0,
+        base_deviation_points: int = 0,
+        force_symbol_fixed_lot: bool = False,
+        minimum_lot: float = 0.0,
+        enable_spread_filter: bool = False,
+        exec_max_spread_points: int = 0,
+    ):
+        self.max_risk_pct = float(max_risk_pct)
+        self.min_confidence = float(min_confidence)
+        self.sl_atr_mult = float(sl_atr_mult)
+        self.tp_rr = float(tp_rr)
+        self.fallback_sl_pct = float(fallback_sl_pct)
+        self.max_leverage = float(max_leverage)
+        self.max_spread_points = int(max_spread_points)
+        self.base_deviation_points = int(base_deviation_points)
+        self.force_symbol_fixed_lot = bool(force_symbol_fixed_lot)
+        self.minimum_lot = max(0.0, float(minimum_lot))
+        self.enable_spread_filter = bool(enable_spread_filter)
+        self.exec_max_spread_points = int(exec_max_spread_points)
+
+    def assess(
+        self,
+        signal: Dict[str, Any],
+        equity: float,
+        entry_price: float,
+        regime: Optional[Dict[str, Any]] = None,
+        symbol: str = "",
+        spread_points: Optional[float] = None,
+        point_size: float = 1.0,
+    ) -> Optional[BacktestRiskParams]:
+        if not isinstance(signal, dict):
+            return None
+
+        action = str(signal.get("signal") or "HOLD").upper()
+        conf = float(signal.get("confidence") or 0.0)
+        if action == "HOLD" or conf < self.min_confidence:
+            return None
+
+        if equity <= 0 or entry_price <= 0:
+            return None
+
+        spread_pts = None if spread_points is None else float(spread_points)
+        if self.enable_spread_filter and spread_pts is not None:
+            cap = int(self.exec_max_spread_points or self.max_spread_points)
+            if cap > 0 and spread_pts > float(cap):
+                return None
+
+        reg = regime if isinstance(regime, dict) else {}
+        atr_pct = float(reg.get("atr_pct") or 0.0)
+        if atr_pct > 0:
+            sl_dist = entry_price * atr_pct * self.sl_atr_mult
+        else:
+            sl_dist = entry_price * self.fallback_sl_pct
+
+        fixed_offset = None
+        if sl_dist <= 0:
+            return None
+
+        risk_money = equity * (self.max_risk_pct / 100.0)
+        per_unit_loss = sl_dist
+        if spread_pts is not None and point_size > 0:
+            per_unit_loss += spread_pts * float(point_size)
+        qty = risk_money / per_unit_loss
+        if qty <= 0:
+            return None
+
+        max_qty = (equity * self.max_leverage) / entry_price
+        qty = min(qty, max_qty)
+        if qty <= 0:
+            return None
+
+        if self.force_symbol_fixed_lot:
+            if self.minimum_lot > 0:
+                qty = self.minimum_lot
+
+        tp_dist = sl_dist if fixed_offset is not None else sl_dist * self.tp_rr
+        if action == "BUY":
+            sl = entry_price - sl_dist
+            tp = entry_price + tp_dist
+        else:
+            sl = entry_price + sl_dist
+            tp = entry_price - tp_dist
+
+        return BacktestRiskParams(
+            qty=float(qty), sl=float(sl), tp=float(tp), fixed_sl_tp_offset=fixed_offset,
+        )
