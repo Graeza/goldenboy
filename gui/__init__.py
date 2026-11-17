@@ -1,1 +1,0 @@
-"""Goldenboy Qt desktop application."""

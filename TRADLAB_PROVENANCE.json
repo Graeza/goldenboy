@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/Graeza/tradlab",
+  "commit": "b222aef75263f4a27100c73d09cc74d797a90f6e",
+  "unchanged_files": {
+    "core/mt5_worker.py": "50e7dadfc3147aa595639bfca3e3b3b9ca42a6b490f9832ec12855fb78f02ffc",
+    "core/mt5_init.py": "e733ee010f3300ee09adb116ffcba044add54c8b641a07d45e52e093d64744c2",
+    "core/data_fetcher.py": "24a9fa3ce28700fe51db7de7ddcdeb08cbec17c8e9a0fb60708699eddaaf4250",
+    "core/database.py": "cefec4464bc209da284706a8fa1eb505474b68e50f9d81e857b17c3bdaefdfc4",
+    "utils/mt5_account.py": "dbb30b5835f559008b2ee0361808a92ab32e957dd96e304b1879ea2ae45cb6f0",
+    "utils/mt5_positions.py": "a71f849230615a08bb5e283864a6054d96f7ca98f793650763dc9087dee6be95",
+    "core/ensemble.py": "fd2a7e1289af66de47706110a14c969c4fd3dcca54d5982ae820db574131aad6",
+    "strategies/base.py": "ec65fad96c4ae6f9d2935c16496d1408e35df4de16772f35d394b852f5f3090f"
+  }
+}
