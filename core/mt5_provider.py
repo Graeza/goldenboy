@@ -7,6 +7,7 @@ import threading
 
 from config import settings
 from .provider import ProviderError, normalize
+from .mt5_credentials import get_mt5_credentials
 
 logger = logging.getLogger('goldenboy.mt5')
 # The terminal bridge is process-global: serialize entire sessions as well as calls.
@@ -38,18 +39,11 @@ class MT5Provider:
         return self._executor.submit(fn, *args, **kwargs).result()
 
     def _initialize(self):
-        creds = (settings.MT5_LOGIN, settings.MT5_PASSWORD, settings.MT5_SERVER)
-        if any(creds) and not all(creds):
-            raise ProviderError('Set MT5_LOGIN, MT5_PASSWORD and MT5_SERVER together in .env, or leave all empty to use the logged-in terminal')
-        kwargs = {'timeout': 30000}
-        if all(creds):
-            try:
-                kwargs.update(login=int(creds[0]), password=creds[1], server=creds[2])
-            except ValueError:
-                raise ProviderError('MT5_LOGIN must be an integer') from None
+        login, server, password, profile = get_mt5_credentials()
+        kwargs = {'timeout': 30000, 'login': login, 'server': server, 'password': password}
         args = (settings.MT5_PATH,) if settings.MT5_PATH else ()
         if not self.mt5.initialize(*args, **kwargs):
-            raise ProviderError('MT5 initialization failed; check terminal installation and .env credentials')
+            raise ProviderError('MT5 initialization failed; check terminal installation and keyring credentials')
         if not self.mt5.symbol_select(settings.MT5_SYMBOL, True):
             raise ProviderError('MT5 symbol unavailable; set MT5_SYMBOL to the exact broker symbol')
         logger.info('Connected to MT5; broker symbol %s', settings.MT5_SYMBOL)
