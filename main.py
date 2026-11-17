@@ -4,10 +4,12 @@ import logging
 from core.logging_setup import configure_logging
 from datetime import datetime, timezone, timedelta
 
-from config.settings import API_KEY, DB_PATH, SYMBOL, TIMEFRAMES
+from config.settings import SYMBOL, TIMEFRAMES
 from core.database import connect, stats
 from core.pipeline import backfill, sync
-from core.provider import TwelveDataProvider, ProviderError
+from core.provider import ProviderError
+from core.sources import SOURCES, create_provider, close_provider, database_path
+from config.settings import DATA_SOURCE
 
 
 def parse_datetime(text):
@@ -26,17 +28,19 @@ def main():
     p.add_argument("--start", help="UTC start date YYYY-MM-DD (backfill only)")
     p.add_argument("--end", help="Exclusive UTC end date YYYY-MM-DD (backfill only)")
     p.add_argument("--timeframe", choices=["all", *TIMEFRAMES], default="all")
+    p.add_argument("--source", choices=SOURCES, default=DATA_SOURCE)
     args = p.parse_args()
-    con = connect(DB_PATH)
+    con = connect(database_path(args.source))
+    provider = None
     try:
         if args.command == "init":
-            print(f"Initialized {DB_PATH}")
+            print(f"Initialized {database_path(args.source)}")
             return
         if args.command == "status":
             for row in stats(con, SYMBOL):
                 print(row)
             return
-        provider = TwelveDataProvider(API_KEY)
+        provider = create_provider(args.source)
         frames = TIMEFRAMES if args.timeframe == "all" else (args.timeframe,)
         now = datetime.now(timezone.utc)
         if args.command == "backfill":
@@ -53,6 +57,8 @@ def main():
         p.exit(1, f"Error: {exc}\n")
     finally:
         con.close()
+        if provider is not None:
+            close_provider(provider)
 
 if __name__ == "__main__":
     main()
