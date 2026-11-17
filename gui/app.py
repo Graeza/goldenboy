@@ -15,11 +15,12 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 import matplotlib.dates as mdates
 
-from config.settings import API_KEY, DB_PATH, SYMBOL, TIMEFRAMES
+from config.settings import API_KEY, SYMBOL, TIMEFRAMES
 from core.database import connect, stats
 from core.logging_setup import configure_logging
 from core.pipeline import backfill, sync
-from core.provider import TwelveDataProvider
+from core.sources import SOURCES, create_provider, close_provider, database_path
+from config.settings import DATA_SOURCE
 
 logger = logging.getLogger('goldenboy.gui')
 
@@ -56,7 +57,8 @@ class LogPump(QObject):
 class Collector(QObject):
     finished = Signal(str)
 
-    def __init__(self, command, key, frames, start, end):
+    def __init__(self, command, key, frames, start, end, source="twelvedata"):
+        self.source = source
         super().__init__()
         self.command, self.key, self.frames = command, key, frames
         self.start, self.end = start, end
@@ -66,8 +68,8 @@ class Collector(QObject):
         provider = None
         message = 'Collection complete'
         try:
-            con = connect(DB_PATH)  # SQLite connection belongs to this worker thread.
-            provider = TwelveDataProvider(self.key)
+            con = connect(database_path(self.source))  # SQLite connection belongs to this worker thread.
+            provider = create_provider(self.source, self.key)
             now = datetime.now(timezone.utc)
             for timeframe in self.frames:
                 if self.command == 'backfill':
@@ -79,11 +81,16 @@ class Collector(QObject):
             message = 'Collection failed — see logs'
             logger.exception('Collection failed')
         finally:
-            if provider is not None:
-                provider.session.close()
-            if con is not None:
-                con.close()
-            self.finished.emit(message)
+            try:
+                if provider is not None:
+                    close_provider(provider)
+            except Exception:
+                message = 'Source cleanup failed — see logs'
+                logger.exception('Source cleanup failed')
+            finally:
+                if con is not None:
+                    con.close()
+                self.finished.emit(message)
 
 
 class Window(QMainWindow):
@@ -97,6 +104,11 @@ class Window(QMainWindow):
         layout = QVBoxLayout(root)
         layout.addWidget(QLabel(f'{SYMBOL} · Stored market candles · UTC'))
         controls = QHBoxLayout()
+        self.source = QComboBox()
+        self.source.addItems(SOURCES)
+        self.source.setCurrentText(DATA_SOURCE)
+        controls.addWidget(QLabel("Source"))
+        controls.addWidget(self.source)
         self.frames = QComboBox()
         self.frames.addItems(['all', *TIMEFRAMES])
         self.start = QDateEdit(QDate.currentDate().addDays(-30))
@@ -153,8 +165,9 @@ class Window(QMainWindow):
         layout.addWidget(self.summary)
         self.pump = LogPump(self.logs, self)
         self.statusBar().showMessage('Ready · Backfill before first sync')
+        self.source.currentTextChanged.connect(self.refresh)
         self.refresh()
-        logger.info('Ready. Database: %s', DB_PATH)
+        logger.info('Ready. Source: %s', self.source.currentText())
 
     def collect(self, command):
         if self.thread is not None:
@@ -164,18 +177,19 @@ class Window(QMainWindow):
         if command == 'backfill' and (start >= end or end > datetime.now(timezone.utc)):
             self.statusBar().showMessage('Choose start < end, with end no later than now (UTC)')
             return
-        if not API_KEY.strip() or API_KEY.strip() == "your_api_key_here":
+        if self.source.currentText() == "twelvedata" and (not API_KEY.strip() or API_KEY.strip() == "your_api_key_here"):
             self.statusBar().showMessage('Set TWELVE_DATA_API_KEY in .env and restart the app')
             return
         frames = TIMEFRAMES if self.frames.currentText() == 'all' else (self.frames.currentText(),)
         self.thread = QThread(self)
-        self.worker = Collector(command, API_KEY.strip(), frames, start, end)
+        self.worker = Collector(command, API_KEY.strip(), frames, start, end, self.source.currentText())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.completed)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread_finished)
+        self.source.setEnabled(False)
         self.backfill_button.setEnabled(False)
         self.sync_button.setEnabled(False)
         self.statusBar().showMessage('Collecting… API rate-limit waits are normal')
@@ -190,13 +204,14 @@ class Window(QMainWindow):
         self.thread.deleteLater()
         self.thread = None
         self.worker = None
+        self.source.setEnabled(True)
         self.backfill_button.setEnabled(True)
         self.sync_button.setEnabled(True)
 
     def refresh(self, *_):
         con = None
         try:
-            con = connect(DB_PATH)
+            con = connect(database_path(self.source.currentText()))
             rows = con.execute('''SELECT time, open, high, low, close FROM BARS
                 WHERE symbol=? AND timeframe=? AND is_closed=1 ORDER BY time DESC LIMIT ?''',
                 (SYMBOL, self.chart_frame.currentText(), self.limit.value())).fetchall()[::-1]
@@ -205,7 +220,7 @@ class Window(QMainWindow):
                                  or 'No stored candles. Choose dates and run Backfill.')
             self.figure.clear()
             ax = self.figure.add_subplot(111)
-            ax.set_title(f'{SYMBOL} · {self.chart_frame.currentText()} · closed candles')
+            ax.set_title(f'{SYMBOL} · {self.source.currentText()} · {self.chart_frame.currentText()} · closed candles')
             ax.set_ylabel('Price (USD)')
             ax.set_xlabel('UTC / daily session date')
             if rows:

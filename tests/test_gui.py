@@ -23,7 +23,7 @@ class GuiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / 'test.db'
-        self.patch = patch('gui.app.DB_PATH', self.db)
+        self.patch = patch('gui.app.database_path', return_value=self.db)
         self.patch.start()
         logging.getLogger('goldenboy').setLevel(logging.INFO)
         self.window = Window()
@@ -82,3 +82,17 @@ class GuiTests(unittest.TestCase):
                 self.assertIsNone(self.window.thread)
                 self.assertIn('.env', self.window.statusBar().currentMessage())
         self.assertFalse(hasattr(self.window, 'key'))
+
+    def test_mt5_does_not_require_twelve_data_key(self):
+        import time
+        from unittest.mock import Mock
+        self.window.source.setCurrentText('mt5')
+        with patch('gui.app.API_KEY', ''), patch('gui.app.create_provider', return_value=Mock()) as factory, patch('gui.app.sync', return_value=0):
+            self.window.collect('sync')
+            deadline = time.monotonic() + 5
+            while self.window.thread is not None and time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(.01)
+            self.assertIsNone(self.window.thread)
+            factory.assert_called_once_with('mt5', '')
+            self.assertTrue(self.window.source.isEnabled())

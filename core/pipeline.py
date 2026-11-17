@@ -32,7 +32,7 @@ def backfill(provider, con, symbol: str, timeframe: str, start: datetime,
         values = provider.fetch(symbol, timeframe, start=cursor, end=request_end)
         if len(values) >= 5000:
             raise ProviderError("Window returned >= 5000 rows; reduce WINDOW_DAYS to prevent truncation")
-        bars = normalize(values, symbol, timeframe, now=now)
+        bars = getattr(provider, "normalize", normalize)(values, symbol, timeframe, now=now)
         total += upsert_bars(con, bars)
         logger.info(f"{timeframe}: {cursor.date()} -> {window_end.date()}, fetched={len(values)}, stored={len(bars)}")
         cursor = window_end
@@ -57,7 +57,7 @@ def sync(provider, con, symbol: str, timeframe: str, now: Optional[datetime] = N
     rows = provider.fetch(symbol, timeframe, start=start, end=now)
     if len(rows) >= 5000:
         raise ProviderError("Sync response hit 5000-row limit, use backfill")
-    bars = normalize(rows, symbol, timeframe, now=now)
+    bars = getattr(provider, "normalize", normalize)(rows, symbol, timeframe, now=now)
     count = upsert_bars(con, bars)
     logger.info(f"{timeframe}: refreshed {count} closed bars")
     return count

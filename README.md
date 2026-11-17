@@ -67,3 +67,24 @@ Scheduling setup is not included in this project. Ensure the API plan permits th
 - No API keys are shipped. No sample prices are represented as real market data.
 - Failure of any request exits nonzero; existing DB rows remain committed. Retry later. API error handling is intentionally conservative (no unattended rate-limit retries).
 - `BARS` is intended for a single symbol. It keeps a symbol column to avoid changing the schema later.
+
+## MetaTrader 5 data source
+
+MT5 support follows [tradlab's serialized MT5 client](https://github.com/Graeza/tradlab/blob/main/core/mt5_worker.py) and [closed-candle range fetching](https://github.com/Graeza/tradlab/blob/main/core/data_fetcher.py). It is read-only and does not place orders.
+
+On Windows, install and log in to your broker's MT5 terminal, then run:
+
+```powershell
+pip install -r requirements-mt5.txt
+python -m gui.app
+# Or use the CLI:
+python main.py backfill --source mt5 --start 2026-11-01 --end 2026-11-16
+python main.py sync --source mt5
+python main.py status --source mt5
+```
+
+Choose `mt5` in the GUI Source selector, or set `GOLD_DATA_SOURCE=mt5` in `.env` as the default. Set `MT5_SYMBOL` to the exact broker symbol (default `XAUUSD`, including any broker suffix). `GOLD_SYMBOL` remains the canonical database symbol. Optionally set `MT5_PATH` to the terminal executable. Leave `MT5_LOGIN`, `MT5_PASSWORD`, and `MT5_SERVER` empty to use the terminal's logged-in account, or set all three in `.env`. Credentials are never entered in the GUI. Restart after configuration changes. A Twelve Data key is not needed for MT5.
+
+MT5 uses `GOLD_MT5_DB_PATH` (default `data/mt5_market_data.db`); Twelve Data retains `GOLD_DB_PATH`. Paths must differ so changing source cannot overwrite candles or resume from another provider's history. Charts and status follow the selected source. Existing Twelve Data databases need no migration. MT5 rows carry `source=mt5`; volume is broker tick volume. Daily MT5 bars preserve actual UTC open timestamps and are withheld until open + 24 hours, unlike Twelve Data's session-date labels. Verify broker session semantics before using daily bars for signals.
+
+All terminal calls, including initialization and shutdown, run on one dedicated worker thread. Available history depends on the broker and the terminal's **Max. bars in chart** setting; empty results are logged and are not proof of complete history. Load the required history in the terminal before backfilling. MT5 is optional; Twelve Data and chart viewing still work without its Windows-only package.
