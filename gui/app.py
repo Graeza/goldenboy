@@ -6,14 +6,11 @@ from logging.handlers import QueueHandler
 
 from PySide6.QtCore import QDate, QObject, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDateEdit, QHBoxLayout, QLabel,
+    QApplication, QCheckBox, QComboBox, QDateEdit, QHBoxLayout, QLabel,
     QMainWindow, QPlainTextEdit, QPushButton, QSpinBox,
     QSplitter, QVBoxLayout, QWidget,
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
-import matplotlib.dates as mdates
+from .chart import MarketChart
 
 from config.settings import API_KEY, SYMBOL, TIMEFRAMES
 from core.database import connect, stats
@@ -133,11 +130,10 @@ class Window(QMainWindow):
         self.chart_frame = QComboBox()
         self.chart_frame.addItems(TIMEFRAMES)
         self.limit = QSpinBox()
-        self.limit.setRange(10, 5000)
+        self.limit.setRange(10, 20000)
         self.limit.setValue(300)
         refresh = QPushButton('Refresh chart')
         refresh.clicked.connect(self.refresh)
-        self.chart_frame.currentTextChanged.connect(self.refresh)
         chart_controls.addWidget(QLabel('Chart interval'))
         chart_controls.addWidget(self.chart_frame)
         chart_controls.addWidget(QLabel('Latest bars'))
@@ -145,16 +141,26 @@ class Window(QMainWindow):
         chart_controls.addWidget(refresh)
         chart_controls.addStretch()
         layout.addLayout(chart_controls)
+        indicator_controls = QHBoxLayout()
+        self.display_from = QDateEdit(QDate.currentDate().addMonths(-1))
+        self.display_from.setCalendarPopup(True)
+        self.display_from.setDisplayFormat('yyyy-MM-dd')
+        indicator_controls.addWidget(QLabel('Display from (UTC):'))
+        indicator_controls.addWidget(self.display_from)
+        indicator_controls.addWidget(QLabel('Indicators:'))
+        self.indicator_checks = {}
+        for name in ('RSI', 'EMA10', 'EMA21', 'MACD', 'MACD Signal', 'MACD Hist'):
+            check = QCheckBox(name)
+            check.setChecked(name in ('RSI', 'EMA10', 'EMA21'))
+            self.indicator_checks[name] = check
+            indicator_controls.addWidget(check)
+        indicator_controls.addStretch()
+        layout.addLayout(indicator_controls)
         splitter = QSplitter()
         from PySide6.QtCore import Qt
         splitter.setOrientation(Qt.Orientation.Vertical)
-        chart = QWidget()
-        chart_layout = QVBoxLayout(chart)
-        self.figure = Figure(layout='constrained')
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        chart_layout.addWidget(NavigationToolbar2QT(self.canvas, self))
-        chart_layout.addWidget(self.canvas)
-        splitter.addWidget(chart)
+        self.chart = MarketChart()
+        splitter.addWidget(self.chart)
         self.logs = QPlainTextEdit()
         self.logs.setReadOnly(True)
         self.logs.setMaximumBlockCount(3000)
@@ -166,6 +172,11 @@ class Window(QMainWindow):
         self.pump = LogPump(self.logs, self)
         self.statusBar().showMessage('Ready · Backfill before first sync')
         self.source.currentTextChanged.connect(self.refresh)
+        self.chart_frame.currentTextChanged.connect(self.refresh)
+        self.display_from.dateChanged.connect(self.refresh)
+        self.limit.valueChanged.connect(self.refresh)
+        for check in self.indicator_checks.values():
+            check.toggled.connect(self.refresh)
         self.refresh()
         logger.info('Ready. Source: %s', self.source.currentText())
 
@@ -213,37 +224,14 @@ class Window(QMainWindow):
         try:
             con = connect(database_path(self.source.currentText()))
             rows = con.execute('''SELECT time, open, high, low, close FROM BARS
-                WHERE symbol=? AND timeframe=? AND is_closed=1 ORDER BY time DESC LIMIT ?''',
-                (SYMBOL, self.chart_frame.currentText(), self.limit.value())).fetchall()[::-1]
+                WHERE symbol=? AND timeframe=? AND is_closed=1 AND time>=? ORDER BY time DESC LIMIT ?''',
+                (SYMBOL, self.chart_frame.currentText(), self.display_from.date().toString("yyyy-MM-dd"), self.limit.value())).fetchall()[::-1]
             summary = stats(con, SYMBOL)
             self.summary.setText(' · '.join(f"{r['timeframe']}: {r['bars']:,} bars (latest {r['last_bar']})" for r in summary)
                                  or 'No stored candles. Choose dates and run Backfill.')
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            ax.set_title(f'{SYMBOL} · {self.source.currentText()} · {self.chart_frame.currentText()} · closed candles')
-            ax.set_ylabel('Price (USD)')
-            ax.set_xlabel('UTC / daily session date')
-            if rows:
-                width = {'5min': 5 / 1440, '1h': 1 / 24, '1day': 1}[self.chart_frame.currentText()] * .7
-                for row in rows:
-                    stamp = datetime.fromisoformat(row['time'].replace('Z', '+00:00'))
-                    if stamp.tzinfo is None:
-                        stamp = stamp.replace(tzinfo=timezone.utc)
-                    x = mdates.date2num(stamp)
-                    color = '#148060' if row['close'] >= row['open'] else '#cb4242'
-                    ax.vlines(x, row['low'], row['high'], color=color, linewidth=.8)
-                    ax.add_patch(Rectangle((x - width / 2, min(row['open'], row['close'])),
-                                           width, abs(row['close'] - row['open']), facecolor=color, edgecolor=color))
-                    if row['open'] == row['close']:
-                        ax.hlines(row['open'], x - width / 2, x + width / 2, color=color)
-                ax.autoscale_view()
-                locator = mdates.AutoDateLocator(tz=timezone.utc)
-                ax.xaxis.set_major_locator(locator)
-                ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=timezone.utc))
-            else:
-                ax.text(.5, .5, 'No stored candles for this interval', transform=ax.transAxes, ha='center')
-            ax.grid(alpha=.2)
-            self.canvas.draw_idle()
+            self.chart.render(rows,
+                              f'{SYMBOL} · {self.source.currentText()} · {self.chart_frame.currentText()} · closed candles',
+                              [name for name, check in self.indicator_checks.items() if check.isChecked()])
         except Exception:
             logger.exception('Cannot refresh chart')
             self.statusBar().showMessage('Chart refresh failed — see logs')

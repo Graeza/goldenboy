@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent, QDate
 from gui.app import Window, Collector
 from core.database import connect, upsert_bars
 from core.provider import normalize
@@ -52,8 +52,16 @@ class GuiTests(unittest.TestCase):
         finally:
             con.close()
         self.window.refresh()
-        self.window.canvas.draw()
-        self.assertEqual(len(self.window.figure.axes[0].patches), 1)
+        self.window.display_from.setDate(QDate(2026, 1, 1))
+        self.app.processEvents()
+        self.assertEqual(len(self.window.chart.rows), 1)
+        self.assertEqual(self.window.chart.rows[0]['close'], 2005)
+        self.assertEqual(set(self.window.chart.curves), {'RSI', 'EMA10', 'EMA21'})
+        self.window.indicator_checks['MACD'].setChecked(True)
+        self.assertIn('MACD', self.window.chart.curves)
+        self.window.display_from.setDate(QDate(2026, 1, 2))
+        self.assertEqual(self.window.chart.rows, [])
+        self.assertEqual(self.window.chart.curves, {})
         self.assertIn('1 bars', self.window.summary.text())
 
     def test_worker_error_always_finishes(self):
