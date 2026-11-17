@@ -83,8 +83,20 @@ python main.py sync --source mt5
 python main.py status --source mt5
 ```
 
-Choose `mt5` in the GUI Source selector, or set `GOLD_DATA_SOURCE=mt5` in `.env` as the default. Set `MT5_SYMBOL` to the exact broker symbol (default `XAUUSD`, including any broker suffix). `GOLD_SYMBOL` remains the canonical database symbol. Optionally set `MT5_PATH` to the terminal executable. Leave `MT5_LOGIN`, `MT5_PASSWORD`, and `MT5_SERVER` empty to use the terminal's logged-in account, or set all three in `.env`. Credentials are never entered in the GUI. Restart after configuration changes. A Twelve Data key is not needed for MT5.
+Choose `mt5` in the GUI Source selector, or set `GOLD_DATA_SOURCE=mt5` in `.env` as the default. Set `MT5_SYMBOL` to the exact broker symbol (default `XAUUSD`, including any broker suffix). `GOLD_SYMBOL` remains the canonical database symbol. Optionally set `MT5_PATH` to the terminal executable. Set `MT5_ACCOUNT_PROFILE=DEMO` (default) or `LIVE`. Login credentials come exclusively from the OS keyring using tradlab's existing entries; there is no environment-credential or logged-in-terminal fallback. Credentials are never entered in the GUI. Restart after configuration changes. A Twelve Data key is not needed for MT5.
 
 MT5 uses `GOLD_MT5_DB_PATH` (default `data/mt5_market_data.db`); Twelve Data retains `GOLD_DB_PATH`. Paths must differ so changing source cannot overwrite candles or resume from another provider's history. Charts and status follow the selected source. Existing Twelve Data databases need no migration. MT5 rows carry `source=mt5`; volume is broker tick volume. Daily MT5 bars preserve actual UTC open timestamps and are withheld until open + 24 hours, unlike Twelve Data's session-date labels. Verify broker session semantics before using daily bars for signals.
 
 All terminal calls, including initialization and shutdown, run on one dedicated worker thread. Available history depends on the broker and the terminal's **Max. bars in chart** setting; empty results are logged and are not proof of complete history. Load the required history in the terminal before backfilling. MT5 is optional; Twelve Data and chart viewing still work without its Windows-only package.
+
+### MT5 keyring setup (shared with tradlab)
+
+If tradlab is already configured under the same OS user and keyring backend, its stored credentials work directly. Otherwise run these commands, entering each value at the hidden prompt:
+
+```powershell
+python -m keyring set mt5 login
+python -m keyring set mt5 server
+python -m keyring set mt5 password
+```
+
+For `MT5_ACCOUNT_PROFILE=LIVE`, replace service `mt5` with `mt5_live` in all three commands. Goldenboy only reads market data from either profile. `MT5_PATH`, `MT5_SYMBOL`, and profile selection remain in `.env`; remove the old `MT5_LOGIN`, `MT5_PASSWORD`, and `MT5_SERVER` values, which are no longer used. Missing or inaccessible keyring entries stop collection with a setup message. Credentials are loaded when connecting, so updates in the keyring apply to the next collection job. Goldenboy never writes to the keyring or logs credential values.

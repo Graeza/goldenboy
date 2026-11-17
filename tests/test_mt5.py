@@ -45,7 +45,7 @@ def rate(stamp):
 
 class MT5Tests(unittest.TestCase):
     def setUp(self):
-        self.credentials = patch.multiple(settings, MT5_LOGIN='', MT5_PASSWORD='', MT5_SERVER='')
+        self.credentials = patch('core.mt5_provider.get_mt5_credentials', return_value=(12345, 'Broker-Demo', 'test-password', 'DEMO'))
         self.credentials.start()
         self.terminal = Terminal()
 
