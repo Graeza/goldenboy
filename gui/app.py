@@ -6,7 +6,7 @@ from logging.handlers import QueueHandler
 
 from PySide6.QtCore import QDate, QObject, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDateEdit, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QDateEdit, QHBoxLayout, QLabel,
     QMainWindow, QPlainTextEdit, QPushButton, QSpinBox,
     QSplitter, QVBoxLayout, QWidget,
 )
@@ -53,9 +53,11 @@ class LogPump(QObject):
 
 class Collector(QObject):
     finished = Signal(str)
+    initialized = Signal(object)
 
-    def __init__(self, command, key, frames, start, end, source="twelvedata"):
+    def __init__(self, command, key, frames, start, end, source="twelvedata", provider=None):
         self.source = source
+        self.shared_provider = provider
         super().__init__()
         self.command, self.key, self.frames = command, key, frames
         self.start, self.end = start, end
@@ -65,8 +67,15 @@ class Collector(QObject):
         provider = None
         message = 'Collection complete'
         try:
+            if self.command == 'initialize':
+                provider = create_provider('mt5')
+                self.initialized.emit(provider)
+                provider = None  # Ownership transfers to the window until shutdown.
+                message = 'MetaTrader initialized — ready to collect'
+                logger.info(message)
+                return
             con = connect(database_path(self.source))  # SQLite connection belongs to this worker thread.
-            provider = create_provider(self.source, self.key)
+            provider = self.shared_provider or create_provider(self.source, self.key)
             now = datetime.now(timezone.utc)
             for timeframe in self.frames:
                 if self.command == 'backfill':
@@ -79,7 +88,7 @@ class Collector(QObject):
             logger.exception('Collection failed')
         finally:
             try:
-                if provider is not None:
+                if provider is not None and provider is not self.shared_provider:
                     close_provider(provider)
             except Exception:
                 message = 'Source cleanup failed — see logs'
@@ -96,6 +105,7 @@ class Window(QMainWindow):
         self.setWindowTitle('Goldenboy · Gold market data')
         self.resize(1200, 850)
         self.thread = None
+        self.mt5_provider = None
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
@@ -119,6 +129,9 @@ class Window(QMainWindow):
         controls.addWidget(self.start)
         controls.addWidget(QLabel('Until UTC (exclusive)'))
         controls.addWidget(self.end)
+        self.initialize_button = QPushButton('Initialize MetaTrader')
+        self.initialize_button.clicked.connect(lambda: self.collect('initialize'))
+        controls.addWidget(self.initialize_button)
         self.backfill_button = QPushButton('Backfill')
         self.sync_button = QPushButton('Sync')
         self.backfill_button.clicked.connect(lambda: self.collect('backfill'))
@@ -141,21 +154,14 @@ class Window(QMainWindow):
         chart_controls.addWidget(refresh)
         chart_controls.addStretch()
         layout.addLayout(chart_controls)
-        indicator_controls = QHBoxLayout()
+        display_controls = QHBoxLayout()
         self.display_from = QDateEdit(QDate.currentDate().addMonths(-1))
         self.display_from.setCalendarPopup(True)
         self.display_from.setDisplayFormat('yyyy-MM-dd')
-        indicator_controls.addWidget(QLabel('Display from (UTC):'))
-        indicator_controls.addWidget(self.display_from)
-        indicator_controls.addWidget(QLabel('Indicators:'))
-        self.indicator_checks = {}
-        for name in ('RSI', 'EMA10', 'EMA21', 'MACD', 'MACD Signal', 'MACD Hist'):
-            check = QCheckBox(name)
-            check.setChecked(name in ('RSI', 'EMA10', 'EMA21'))
-            self.indicator_checks[name] = check
-            indicator_controls.addWidget(check)
-        indicator_controls.addStretch()
-        layout.addLayout(indicator_controls)
+        display_controls.addWidget(QLabel('Display from (UTC):'))
+        display_controls.addWidget(self.display_from)
+        display_controls.addStretch()
+        layout.addLayout(display_controls)
         splitter = QSplitter()
         from PySide6.QtCore import Qt
         splitter.setOrientation(Qt.Orientation.Vertical)
@@ -175,14 +181,17 @@ class Window(QMainWindow):
         self.chart_frame.currentTextChanged.connect(self.refresh)
         self.display_from.dateChanged.connect(self.refresh)
         self.limit.valueChanged.connect(self.refresh)
-        for check in self.indicator_checks.values():
-            check.toggled.connect(self.refresh)
         self.refresh()
         logger.info('Ready. Source: %s', self.source.currentText())
 
     def collect(self, command):
         if self.thread is not None:
             return
+        if command == 'initialize':
+            if self.mt5_provider is not None:
+                self.statusBar().showMessage('MetaTrader is already initialized')
+                return
+            self.source.setCurrentText('mt5')
         start = datetime.combine(self.start.date().toPython(), datetime.min.time(), timezone.utc)
         end = datetime.combine(self.end.date().toPython(), datetime.min.time(), timezone.utc)
         if command == 'backfill' and (start >= end or end > datetime.now(timezone.utc)):
@@ -193,19 +202,25 @@ class Window(QMainWindow):
             return
         frames = TIMEFRAMES if self.frames.currentText() == 'all' else (self.frames.currentText(),)
         self.thread = QThread(self)
-        self.worker = Collector(command, API_KEY.strip(), frames, start, end, self.source.currentText())
+        self.worker = Collector(command, API_KEY.strip(), frames, start, end, self.source.currentText(),
+                                self.mt5_provider if self.source.currentText() == 'mt5' else None)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
+        self.worker.initialized.connect(self.mt5_initialized)
         self.worker.finished.connect(self.completed)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread_finished)
+        self.initialize_button.setEnabled(False)
         self.source.setEnabled(False)
         self.backfill_button.setEnabled(False)
         self.sync_button.setEnabled(False)
-        self.statusBar().showMessage('Collecting… API rate-limit waits are normal')
+        self.statusBar().showMessage('Initializing MetaTrader…' if command == 'initialize' else 'Collecting… API rate-limit waits are normal')
         logger.info('Starting %s for %s', command, ', '.join(frames))
         self.thread.start()
+
+    def mt5_initialized(self, provider):
+        self.mt5_provider = provider
 
     def completed(self, message):
         self.statusBar().showMessage(message)
@@ -215,6 +230,7 @@ class Window(QMainWindow):
         self.thread.deleteLater()
         self.thread = None
         self.worker = None
+        self.initialize_button.setEnabled(self.mt5_provider is None)
         self.source.setEnabled(True)
         self.backfill_button.setEnabled(True)
         self.sync_button.setEnabled(True)
@@ -230,8 +246,7 @@ class Window(QMainWindow):
             self.summary.setText(' · '.join(f"{r['timeframe']}: {r['bars']:,} bars (latest {r['last_bar']})" for r in summary)
                                  or 'No stored candles. Choose dates and run Backfill.')
             self.chart.render(rows,
-                              f'{SYMBOL} · {self.source.currentText()} · {self.chart_frame.currentText()} · closed candles',
-                              [name for name, check in self.indicator_checks.items() if check.isChecked()])
+                              f'{SYMBOL} · {self.source.currentText()} · {self.chart_frame.currentText()} · closed candles')
         except Exception:
             logger.exception('Cannot refresh chart')
             self.statusBar().showMessage('Chart refresh failed — see logs')
@@ -244,6 +259,12 @@ class Window(QMainWindow):
             self.statusBar().showMessage('Wait for collection to finish before closing')
             event.ignore()
             return
+        if self.mt5_provider is not None:
+            try:
+                close_provider(self.mt5_provider)
+            except Exception:
+                logger.exception('MetaTrader shutdown failed')
+            self.mt5_provider = None
         self.pump.close()
         event.accept()
 

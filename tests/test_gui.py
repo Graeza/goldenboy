@@ -56,12 +56,9 @@ class GuiTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(len(self.window.chart.rows), 1)
         self.assertEqual(self.window.chart.rows[0]['close'], 2005)
-        self.assertEqual(set(self.window.chart.curves), {'RSI', 'EMA10', 'EMA21'})
-        self.window.indicator_checks['MACD'].setChecked(True)
-        self.assertIn('MACD', self.window.chart.curves)
         self.window.display_from.setDate(QDate(2026, 1, 2))
         self.assertEqual(self.window.chart.rows, [])
-        self.assertEqual(self.window.chart.curves, {})
+        self.assertEqual(self.window.chart.price.listDataItems(), [])
         self.assertIn('1 bars', self.window.summary.text())
 
     def test_worker_error_always_finishes(self):
@@ -104,3 +101,43 @@ class GuiTests(unittest.TestCase):
             self.assertIsNone(self.window.thread)
             factory.assert_called_once_with('mt5', '')
             self.assertTrue(self.window.source.isEnabled())
+
+    def wait_for_job(self):
+        import time
+        deadline = time.monotonic() + 5
+        while self.window.thread is not None and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.01)
+        self.assertIsNone(self.window.thread)
+
+    def test_initialize_retains_connection_reuses_it_and_closes_on_exit(self):
+        from unittest.mock import Mock
+        provider = Mock()
+        with patch('gui.app.create_provider', return_value=provider) as factory:
+            self.window.initialize_button.click()
+            self.assertFalse(self.window.initialize_button.isEnabled())
+            self.wait_for_job()
+            factory.assert_called_once_with('mt5')
+        self.assertIs(self.window.mt5_provider, provider)
+        self.assertEqual(self.window.source.currentText(), 'mt5')
+        self.assertFalse(self.window.initialize_button.isEnabled())
+        provider.close.assert_not_called()
+        with patch('gui.app.create_provider') as factory, patch('gui.app.sync', return_value=0) as sync:
+            self.window.collect('sync')
+            self.wait_for_job()
+            factory.assert_not_called()
+            self.assertIs(sync.call_args.args[0], provider)
+        provider.close.assert_not_called()
+        self.window.close()
+        provider.close.assert_called_once()
+
+    def test_initialize_failure_allows_retry(self):
+        from core.provider import ProviderError
+        with patch('gui.app.create_provider', side_effect=ProviderError('Connection unavailable')):
+            self.window.initialize_button.click()
+            self.wait_for_job()
+        self.assertIsNone(self.window.mt5_provider)
+        self.assertTrue(self.window.initialize_button.isEnabled())
+        self.assertTrue(self.window.sync_button.isEnabled())
+        self.window.pump.drain()
+        self.assertIn('Connection unavailable', self.window.logs.toPlainText())

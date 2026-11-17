@@ -20,7 +20,7 @@ Run `python -m gui.app` after installing requirements. The Qt desktop app offers
 - Backfill and sync for one interval or all intervals, with UTC date controls.
 - Background collection while the interface remains responsive. One job runs at a time; wait for it to finish before closing.
 - A queue-based log pump displaying live application logs, plus rotating files in `logs/goldenboy.log` (2 MB each, three backups).
-- Tradlab-style pyqtgraph candlestick charts with linked price/indicator panels, interval selection, a UTC display-start date, and a latest-bar limit (up to 20,000). Drag to pan, use the wheel to zoom, and right-click for auto-range and export. Toggle EMA10, EMA21, RSI(14), MACD(12,26,9), signal, and histogram.
+- Tradlab-style pyqtgraph candlestick charts with interval selection, a UTC display-start date, and a latest-bar limit (up to 20,000). Drag to pan, use the wheel to zoom, and right-click for auto-range and export.
 
 Configure `TWELVE_DATA_API_KEY` in `.env` before launching the app. The GUI has no API-key input and never displays or saves the key. Restart the app after changing `.env`. Backfill before the first sync. Charts show stored data; use Sync to fetch updates, then charts refresh automatically. No automatic collection schedule is enabled. Daily candles retain the session-date limitations below.
 
@@ -103,6 +103,10 @@ For `MT5_ACCOUNT_PROFILE=LIVE`, replace service `mt5` with `mt5_live` in all thr
 
 ### Chart behavior
 
-Charting follows [tradlab's candlestick view](https://github.com/Graeza/tradlab/blob/main/gui/app.py): green/red candle bodies, linked price and indicator panels, legends, grid lines, and bar-index spacing that compresses market closures. EMA10, EMA21, and RSI are selected initially; MACD components are opt-in. Indicators use the same TA-Lib EMA/MACD and simple rolling-average RSI calculations as tradlab. Initial warmup values are blank. Calculations use the displayed bars; changing the display date or limit changes their warmup history. RSI and MACD share the lower panel as in tradlab, so their different scales can affect readability when enabled together.
+Charting uses tradlab-style green/red candles, bar-index spacing that compresses market closures, grid lines, drag-to-pan and wheel-to-zoom. The chart shows candles only, with no indicators or lower indicator panel. Right-click for auto-range and export.
 
-“Display from” filters stored candles from UTC midnight independently of collection dates. Source, interval, date, limit, or indicator changes redraw the chart. The bottom label shows the first and last timestamps; the horizontal axis uses bar numbers. An empty range clears the previous chart. Right-click a panel and choose Export to save an image or data.
+“Display from” filters stored candles from UTC midnight independently of collection dates. Source, interval, date, or limit changes redraw the chart. The bottom label shows the first and last timestamps; the horizontal axis uses bar numbers. An empty range clears the previous chart.
+
+### Initialize MetaTrader
+
+Click **Initialize MetaTrader** to select MT5, connect using the configured keyring profile, and select the broker symbol. Initialization runs in the background and reports success or failure in the status bar and logs. It does not fetch candles. On success the connection remains open and is reused by subsequent MT5 backfill/sync jobs until the app closes; the button is disabled while connected. Failed initialization can be retried. All collection controls are disabled while a job is running. Closing the app shuts down the retained MT5 connection. Backfill and sync also work without initializing first, using a connection scoped to that job.
